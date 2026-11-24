@@ -289,8 +289,11 @@ bool player_init(void) {
     }
     s32 prio = 0x30;
     svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    s32 dprio = prio - 2;
-    if (dprio < 0x18) dprio = 0x18;
+    /* BELOW the main thread: the main thread must always be able to answer the
+     * system (HOME / power button) right away, or the whole console hangs.
+     * The 8-buffer queue (~0.7s) keeps audio smooth while the UI draws. */
+    s32 dprio = prio + 1;
+    if (dprio > 0x3F) dprio = 0x3F;
     dec_thread = threadCreate(dec_main, NULL, DEC_STACK, dprio, 2, false);    /* New 3DS core 2 */
     if (!dec_thread) dec_thread = threadCreate(dec_main, NULL, DEC_STACK, dprio, -2, false);
     return dec_thread != NULL;
