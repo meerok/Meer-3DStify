@@ -10,16 +10,19 @@
 #include "gfx_3ds.h"
 
 static aptHookCookie apt_cookie;
-static bool lcd_ok = false;
 static bool backlight = true;
 static volatile bool woke_from_sleep = false;
 
-static void set_backlight(bool on) {
-    if (!lcd_ok || on == backlight) return;
-    backlight = on;
+static void/* Only hold the screen-light service for the moment we use it, so the HOME
+ * Menu (which also needs it) is never blocked by us. */
+ set_backlight(bool on) {
+    if (on == backlight) return;
+    if (R_FAILED(gspLcdInit())) return;
     if (on) GSPLCD_PowerOnBacklight(GSPLCD_SCREEN_BOTH);
     else GSPLCD_PowerOffBacklight(GSPLCD_SCREEN_BOTH);
-}
+}    gspLcdExit();
+    backlight = on;
+
 
 static void apt_hook(APT_HookType hook, void *param) {
     (void)param;
@@ -69,8 +72,7 @@ int main(void) {
     C3D_RenderTarget *bot = C2D_CreateScreenTarget(GFX_BOTTOM, GFX_LEFT);
     gfx3ds_init();
     ptmuInit();
-    lcd_ok = R_SUCCEEDED(gspLcdInit());
-    srand((unsigned)time(NULL) ^ (unsigned)osGetTime());
+    lcd_ok unsigned)time(NULL) ^ (unsigned)osGetTime());
 
     /* draw one frame right away so launching feels instant */
     C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
@@ -166,7 +168,6 @@ int main(void) {
     player_exit();
     set_backlight(true);
     aptSetSleepAllowed(true);
-    if (lcd_ok) gspLcdExit();
     ptmuExit();
     gfx3ds_exit();
     C2D_Fini();
