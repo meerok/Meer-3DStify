@@ -12,6 +12,7 @@
 static aptHookCookie apt_cookie;
 static bool lcd_ok = false;
 static bool backlight = true;
+static volatile bool woke_from_sleep = false;
 
 static void set_backlight(bool on) {
     if (!lcd_ok || on == backlight) return;
@@ -28,7 +29,10 @@ static void apt_hook(APT_HookType hook, void *param) {
             app_on_suspend();
             break;
         case APTHOOK_ONRESTORE:
+            app_on_resume();             /* back from the HOME Menu: carry on playing */
+            break;
         case APTHOOK_ONWAKEUP:
+            woke_from_sleep = true;      /* the 3DS really slept: come back paused */
             app_on_resume();
             break;
         default:
@@ -82,7 +86,7 @@ int main(void) {
     hidSetRepeatParameters(16, 4);
     u64 last = osGetTime();
     bool sleep_allowed = true, lid_closed = false;
-    float shell_t = 0;
+    float shell_t = 0, awake_hold = 0;
 
     while (aptMainLoop()) {
         hidScanInput();
@@ -113,16 +117,33 @@ int main(void) {
 
         if (!app_update(&in, dt)) break;
 
-        /* keep playing with the lid shut */
-        bool want_sleep = !app_keep_awake();
+        if (woke_from_sleep) {
+            woke_from_sleep = false;
+            extern void player_pause(void);
+            player_pause();
+        }
+
+        /* Keep playing with the lid shut (speakers or headphones).
+         * Sleep stays blocked for a few seconds after playback stops, so the
+         * gap between two songs never lets the 3DS fall asleep. */
+        if (app_keep_awake()) awake_hold = 4.0f;
+        else if (awake_hold > 0) awake_hold -= dt;
+        bool want_sleep = awake_hold <= 0;
         if (want_sleep != sleep_allowed) { aptSetSleepAllowed(want_sleep); sleep_allowed = want_sleep; }
         shell_t += dt;
-        if (shell_t > 0.3f) {
+        if (shell_t > 0.1f) {
             shell_t = 0;
             u8 shell = 1;
             if (R_SUCCEEDED(PTMU_GetShellState(&shell))) lid_closed = shell == 0;
         }
         set_backlight(!lid_closed && !app_screens_off());
+
+        if (lid_closed) {
+            /* screens are off: don't wait on the GPU/VBlank, just keep the app
+             * logic (next song, sleep timer, fades) ticking */
+            svcSleepThread(16 * 1000000LL);
+            continue;
+        }
 
         C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
         gfx3ds_frame();
@@ -131,11 +152,11 @@ int main(void) {
         C2D_TargetClear(top, C2D_Color32(0x12, 0x12, 0x12, 0xFF));
         C2D_SceneBegin(top);
         gfx3ds_screen(400);
-        if (!lid_closed) app_draw_top();
+        app_draw_top();
         C2D_TargetClear(bot, C2D_Color32(0x12, 0x12, 0x12, 0xFF));
         C2D_SceneBegin(bot);
         gfx3ds_screen(320);
-        if (!lid_closed) app_draw_bottom();
+        app_draw_bottom();
         C3D_FrameEnd(0);
     }
 
