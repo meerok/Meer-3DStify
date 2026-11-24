@@ -9,13 +9,13 @@
 Plays the music on your SD card · album art · shuffle & repeat · queue · equalizer · sleep timer
 
 [![Build](https://github.com/meerok/Meer-3DStify/actions/workflows/build.yml/badge.svg)](https://github.com/meerok/Meer-3DStify/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/meerok/Meer-3DStify?label=download)](https://github.com/meerok/Meer-3DStify/releases/latest)
+
+<img src="preview.png" alt="3DStify running on a 3DS: now playing on the top screen, library on the touch screen" width="100%">
 
 <img src="assets/real-3ds.jpg" alt="3DStify running on a real New Nintendo 2DS XL" width="520">
 
 <sub>Running on real hardware (New Nintendo 2DS XL)</sub>
-[![Release](https://img.shields.io/github/v/release/meerok/Meer-3DStify?label=download)](https://github.com/meerok/Meer-3DStify/releases/latest)
-
-<img src="preview.png" alt="3DStify running on a 3DS: now playing on the top screen, library on the touch screen" width="100%">
 
 </div>
 
