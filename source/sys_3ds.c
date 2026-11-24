@@ -7,7 +7,7 @@ _Static_assert(sizeof(LightLock) <= sizeof(SysLock), "SysLock too small");
 SysThread sys_thread_start(void (*fn)(void *), void *arg, size_t stack) {
     s32 prio = 0x30;
     svcGetThreadPriority(&prio, CUR_THREAD_HANDLE);
-    s32 wp = prio + 1;
+    s32 wp = prio + 2;              /* below the audio decoder (prio + 1) */
     if (wp > 0x3F) wp = 0x3F;
     Thread t = threadCreate(fn, arg, stack, wp, -2, false);
     return (SysThread)t;
