@@ -47,7 +47,9 @@ Copy `3DStify.3dsx` from the [latest release](https://github.com/meerok/Meer-3DS
 
 ## Adding music
 
-Copy `.mp3` files **anywhere** on your SD card, for example `sdmc:/Music/Artist/Album/01 Song.mp3`. 3DStify scans the whole card the first time it starts and remembers the result, so later launches are instant. Added more songs? Go to **Settings > Rescan SD card**.
+Copy `.mp3` files **anywhere** on your SD card, for example `sdmc:/Music/Artist/Album/01 Song.mp3`. 3DStify scans the whole card the first time it starts and remembers the result, so later launches are instant. Added more songs? Go to **Settings > Rescan music**.
+
+**Only want one folder?** Some games and homebrew keep their own MP3s on the SD card. To keep them out of your library, go to **Settings > Music folder**, browse to your music folder (for example `Music`) and tap **Use this folder**. 3DStify then only shows songs inside that folder and its subfolders. To go back, choose **Use the whole SD card**.
 
 - Song titles, artists, albums and track numbers come from the ID3 tags (ID3v2.2/2.3/2.4 and ID3v1). Untagged files use the file and folder names.
 - Album art comes from the cover embedded in the MP3, or a `cover.jpg` / `folder.jpg` (or any JPG/PNG) in the album folder.

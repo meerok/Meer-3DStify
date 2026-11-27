@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include "app.h"
 #include "art.h"
 #include "gfx.h"
@@ -44,7 +46,7 @@
 #define HERO   (HB + 72)   /* detail page header block */
 
 enum { TAB_SONGS, TAB_ALBUMS, TAB_ARTISTS, TAB_LIKED, TAB_SETTINGS, NTABS };
-enum { PG_SONGS, PG_ALBUMS, PG_ARTISTS, PG_LIKED, PG_SETTINGS, PG_ALBUM, PG_ARTIST };
+enum { PG_SONGS, PG_ALBUMS, PG_ARTISTS, PG_LIKED, PG_SETTINGS, PG_ALBUM, PG_ARTIST, PG_FOLDERS };
 enum { CTX_ALL, CTX_ALBUM, CTX_ARTIST, CTX_LIKED };
 enum { REP_OFF, REP_ALL, REP_ONE };
 enum { SLEEP_OFF, SLEEP_15, SLEEP_30, SLEEP_45, SLEEP_60, SLEEP_EOT, SLEEP_COUNT };
@@ -65,7 +67,8 @@ static struct {
     double last_pos;
     int   ctx_kind;
     char  ctx_key[256];
-} S = { 0, REP_OFF, EQ_FLAT, SORT_TITLE, 1, 1, 0.8f, "", 0, CTX_ALL, "" };
+    char  folder[512];       /* music folder, "" = the whole SD card */
+} S = { 0, REP_OFF, EQ_FLAT, SORT_TITLE, 1, 1, 0.8f, "", 0, CTX_ALL, "", "" };
 
 /* -------------------------------------------------------------- queue */
 static int  *ctx;            /* tracks of what we're playing from */
@@ -161,6 +164,7 @@ static void settings_load(void) {
         else if (!strcmp(k, "pos")) S.last_pos = atof(v);
         else if (!strcmp(k, "ctx")) S.ctx_kind = atoi(v);
         else if (!strcmp(k, "ctxkey")) snprintf(S.ctx_key, sizeof S.ctx_key, "%s", v);
+        else if (!strcmp(k, "folder")) snprintf(S.folder, sizeof S.folder, "%s", v);
     }
     fclose(f);
     if (S.repeat < 0) S.repeat = 0;
@@ -179,7 +183,7 @@ static void settings_save(void) {
     if (!f) return;
     fprintf(f, "shuffle=%d\nrepeat=%d\neq=%d\nsort=%d\nresume=%d\nlid=%d\nvolume=%.2f\n",
             S.shuffle, S.repeat, S.eq, S.sort, S.resume, S.lid, S.volume);
-    fprintf(f, "last=%s\npos=%.1f\nctx=%d\nctxkey=%s\n", S.last, S.last_pos, S.ctx_kind, S.ctx_key);
+    fprintf(f, "last=%s\npos=%.1f\nctx=%d\nctxkey=%s\nfolder=%s\n", S.last, S.last_pos, S.ctx_kind, S.ctx_key, S.folder);
     fclose(f);
     remove(SETTINGS_FILE);
     rename(SETTINGS_FILE ".tmp", SETTINGS_FILE);
@@ -349,9 +353,77 @@ static float row_h(const Page *p) {
     return 40;
 }
 
-#define NSET 14
+#define NSET 15
 enum { SI_H_PLAY, SI_SHUFFLE, SI_REPEAT, SI_EQ, SI_VOLUME, SI_SLEEP, SI_RESUME, SI_LID,
-       SI_H_LIB, SI_SORT, SI_RESCAN, SI_H_ABOUT, SI_ABOUT, SI_CREDIT };
+       SI_H_LIB, SI_FOLDER, SI_SORT, SI_RESCAN, SI_H_ABOUT, SI_ABOUT, SI_CREDIT };
+
+/* ---------------------------------------------------- folder browser */
+static char   fb_path[512] = "sdmc:/";
+static char **fb_dirs;
+static int    fb_n;
+
+static bool fb_is_root(void) { return !strcmp(fb_path, "sdmc:/"); }
+static int  fb_first_dir(void) { return fb_is_root() ? 1 : 2; }   /* row 0 "use", row 1 "up" */
+
+static int cmp_name(const void *a, const void *b) { return strcasecmp(*(char *const *)a, *(char *const *)b); }
+
+static void fb_load(const char *path) {
+    for (int i = 0; i < fb_n; i++) free(fb_dirs[i]);
+    free(fb_dirs);
+    fb_dirs = NULL;
+    fb_n = 0;
+    snprintf(fb_path, sizeof fb_path, "%s", path && *path ? path : "sdmc:/");
+    DIR *d = opendir(fb_path);
+    if (!d) { snprintf(fb_path, sizeof fb_path, "sdmc:/"); d = opendir(fb_path); }
+    if (!d) return;
+    struct dirent *e;
+    int cap = 0;
+    while ((e = readdir(d)) && fb_n < 800) {
+        const char *nm = e->d_name;
+        if (nm[0] == '.') continue;
+        bool is_dir = false;
+#ifdef DT_DIR
+        if (e->d_type == DT_DIR) is_dir = true;
+        else if (e->d_type == DT_UNKNOWN)
+#endif
+        {
+            char full[800];
+            struct stat st;
+            snprintf(full, sizeof full, "%s%s%s", fb_path, fb_path[strlen(fb_path) - 1] == '/' ? "" : "/", nm);
+            if (stat(full, &st) == 0 && S_ISDIR(st.st_mode)) is_dir = true;
+        }
+        if (!is_dir) continue;
+        if (fb_is_root() && (!strcasecmp(nm, "Nintendo 3DS") || !strcasecmp(nm, "Nintendo DSiWare"))) continue;
+        if (fb_n == cap) {
+            cap = cap ? cap * 2 : 32;
+            char **nd = (char **)realloc(fb_dirs, (size_t)cap * sizeof(char *));
+            if (!nd) break;
+            fb_dirs = nd;
+        }
+        fb_dirs[fb_n] = strdup(nm);
+        if (fb_dirs[fb_n]) fb_n++;
+    }
+    closedir(d);
+    if (fb_n > 1) qsort(fb_dirs, (size_t)fb_n, sizeof(char *), cmp_name);
+}
+
+static void fb_up(void) {
+    char p[512];
+    snprintf(p, sizeof p, "%s", fb_path);
+    size_t n = strlen(p);
+    if (n > 0 && p[n - 1] == '/') p[--n] = 0;
+    char *sl = strrchr(p, '/');
+    if (!sl) { fb_load("sdmc:/"); return; }
+    if (sl > p && sl[-1] == ':') sl[1] = 0;      /* back to "sdmc:/" */
+    else *sl = 0;
+    fb_load(p);
+}
+
+static const char *folder_label(const char *f) {
+    if (!f || !*f || !strcmp(f, "sdmc:/")) return "Whole SD card";
+    const char *sl = strrchr(f, '/');
+    return sl && sl[1] ? sl + 1 : f;
+}
 
 static const int *page_tracks(const Page *p, int *n) {
     switch (p->type) {
@@ -370,6 +442,7 @@ static int page_rows(const Page *p) {
         case PG_ALBUMS:   return lib_nalbums;
         case PG_ARTISTS:  return lib_nartists;
         case PG_SETTINGS: return NSET;
+        case PG_FOLDERS:  return fb_first_dir() + fb_n;
         default: page_tracks(p, &n); return n;
     }
 }
@@ -451,6 +524,10 @@ static void settings_activate(int i, int dir) {
         case SI_RESUME:  S.resume = !S.resume; break;
         case SI_LID:     S.lid = !S.lid; break;
         case SI_SORT:    S.sort = (S.sort + (dir < 0 ? SORT_COUNT - 1 : 1)) % SORT_COUNT; lib_sort(S.sort); break;
+        case SI_FOLDER:
+            fb_load(S.folder[0] ? S.folder : "sdmc:/");
+            push_page(PG_FOLDERS, 0);
+            return;
         case SI_RESCAN:
             if (!lib_scanning()) { lib_scan_start(); toast("Scanning your SD card..."); }
             break;
@@ -471,8 +548,36 @@ static void play_page(Page *p, bool shuffle) {
     start_list(list, n, -1, kind, key, name, shuffle);
 }
 
+static void use_folder(void) {
+    if (lib_scanning()) { toast("Wait for the current scan to finish"); return; }
+    if (fb_is_root()) S.folder[0] = 0;
+    else snprintf(S.folder, sizeof S.folder, "%s", fb_path);
+    settings_save();
+    lib_set_root(S.folder);
+    lib_scan_start();
+    char b[96];
+    snprintf(b, sizeof b, "Music folder: %s", folder_label(S.folder));
+    toast(b);
+    pop_page();
+}
+
 static void open_row(Page *p, int i) {
     if (i < 0 || i >= page_rows(p)) return;
+    if (p->type == PG_FOLDERS) {
+        if (i == 0) { use_folder(); return; }
+        if (!fb_is_root() && i == 1) fb_up();
+        else {
+            int k = i - fb_first_dir();
+            if (k < 0 || k >= fb_n) return;
+            char np[512];
+            snprintf(np, sizeof np, "%s%s%s", fb_path, fb_path[strlen(fb_path) - 1] == '/' ? "" : "/", fb_dirs[k]);
+            fb_load(np);
+        }
+        p->sel = 0;
+        p->scroll = p->target = 0;
+        p->vel = 0;
+        return;
+    }
     if (p->type == PG_ALBUMS) { push_page(PG_ALBUM, i); return; }
     if (p->type == PG_ARTISTS) { push_page(PG_ARTIST, i); return; }
     if (p->type == PG_SETTINGS) { settings_activate(i, 1); return; }
@@ -712,7 +817,10 @@ static void handle_buttons(const Input *in, float dt) {
 
     Page *p = page();
     int n = page_rows(p);
-    if (kd & BTN_B) { if (dep[tab] > 1) pop_page(); }
+    if (kd & BTN_B) {
+        if (p->type == PG_FOLDERS && !fb_is_root()) { fb_up(); p->sel = 0; p->scroll = p->target = 0; }
+        else if (dep[tab] > 1) pop_page();
+    }
     if (kr & (BTN_UP | BTN_DOWN)) {
         if (!cursor_mode) { cursor_mode = true; }
         else {
@@ -903,9 +1011,10 @@ static void draw_settings_row(int i, float y, col_t bg) {
         case SI_RESUME:  label = "Resume where you left off"; break;
         case SI_LID:     label = "Keep playing with lid closed"; break;
         case SI_SORT:    label = "Sort songs by"; break;
-        case SI_RESCAN:  label = "Rescan SD card"; break;
+        case SI_FOLDER:  label = "Music folder"; break;
+        case SI_RESCAN:  label = "Rescan music"; break;
         case SI_ABOUT:   label = "3DStify by Meer"; break;
-        case SI_CREDIT:  label = "Plays .mp3 files from anywhere on your SD card"; break;
+        case SI_CREDIT:  label = "Plays .mp3 files from your SD card or a folder you pick"; break;
     }
     if (i == SI_CREDIT) { gfx_text_fit(14, ty + 1, 0.4f, C_MUTED, ALIGN_LEFT, 292, label, false); return; }
     gfx_text(14, ty, 0.48f, C_WHITE, ALIGN_LEFT, label);
@@ -927,6 +1036,13 @@ static void draw_settings_row(int i, float y, col_t bg) {
             float w = gfx_text_width(v, 0.44f);
             gfx_text(296, ty + 1, 0.44f, on ? C_GREEN : C_SUB, ALIGN_RIGHT, v);
             icon_back(296 - w - 9, y + 17, 7, C_MUTED);
+            gfx_line(301, y + 14, 304, y + 17, 1.4f, C_MUTED);
+            gfx_line(304, y + 17, 301, y + 20, 1.4f, C_MUTED);
+            break;
+        }
+        case SI_FOLDER: {
+            const char *v = folder_label(S.folder);
+            gfx_text_fit(296, ty + 1, 0.44f, S.folder[0] ? C_GREEN : C_SUB, ALIGN_RIGHT, 150, v, false);
             gfx_line(301, y + 14, 304, y + 17, 1.4f, C_MUTED);
             gfx_line(304, y + 17, 301, y + 20, 1.4f, C_MUTED);
             break;
@@ -1041,6 +1157,24 @@ static void draw_page(const Page *p, float ox) {
             gfx_text(60, y + 26, 0.4f, C_SUB, ALIGN_LEFT, sub);
         } else if (p->type == PG_SETTINGS) {
             draw_settings_row(i, y, rbg);
+        } else if (p->type == PG_FOLDERS) {
+            if (i == 0) {
+                gfx_circle(26, y + 20, 12, C_GREEN);
+                gfx_line(20, y + 20, 24.5f, y + 24.5f, 2.4f, C_BLACK);
+                gfx_line(24.5f, y + 24.5f, 32, y + 15, 2.4f, C_BLACK);
+                gfx_text_bold(48, y + 5, 0.5f, C_GREEN, ALIGN_LEFT, fb_is_root() ? "Use the whole SD card" : "Use this folder");
+                gfx_text_fit(48, y + 22, 0.4f, C_SUB, ALIGN_LEFT, 256, fb_path, false);
+            } else if (!fb_is_root() && i == 1) {
+                icon_back(26, y + 20, 14, C_SUB);
+                gfx_text(48, y + 12, 0.5f, C_WHITE, ALIGN_LEFT, "Up one level");
+            } else {
+                int k = i - fb_first_dir();
+                gfx_rrect(15, y + 12, 9, 5, 1.5f, HEXC(0xC9A34A));
+                gfx_rrect(15, y + 15, 23, 15, 2, HEXC(0xE5BE5C));
+                gfx_text_fit(48, y + 12, 0.5f, C_WHITE, ALIGN_LEFT, 240, fb_dirs[k], false);
+                gfx_line(301, y + 17, 304, y + 20, 1.4f, C_MUTED);
+                gfx_line(304, y + 20, 301, y + 23, 1.4f, C_MUTED);
+            }
         }
     }
 
@@ -1075,12 +1209,16 @@ static void draw_page(const Page *p, float ox) {
         float sh = clampf(p->scroll / 20, 0, 1);
         gfx_rect(0, 0, BW, HB, bg);
         if (sh > 0) gfx_rect_v(0, HB, BW, 6, gfx_alpha(C_BLACK, 0.5f * sh), gfx_alpha(C_BLACK, 0));
+        if (p->type == PG_FOLDERS) {
+            icon_back(17, 17, 13, C_WHITE);
+            gfx_text_bold(36, 7, 0.7f, C_WHITE, ALIGN_LEFT, "Music folder");
+        } else
         gfx_text_bold(14, 7, 0.7f, C_WHITE, ALIGN_LEFT, tab_names[tab]);
         char cnt[32] = "";
         if (p->type == PG_SONGS) snprintf(cnt, sizeof cnt, "%d", lib_ntracks);
         else if (p->type == PG_ALBUMS) snprintf(cnt, sizeof cnt, "%d", lib_nalbums);
         else if (p->type == PG_ARTISTS) snprintf(cnt, sizeof cnt, "%d", lib_nartists);
-        float tw = gfx_text_width(tab_names[tab], 0.7f);
+        float tw = p->type == PG_FOLDERS ? 400 : gfx_text_width(tab_names[tab], 0.7f);
         if (cnt[0]) gfx_text(22 + tw, 13, 0.42f, C_MUTED, ALIGN_LEFT, cnt);
         if (p->type == PG_SONGS && lib_ntracks > 0) {
             gfx_circle(296, 17, 13, C_GREEN);
@@ -1403,6 +1541,7 @@ void app_init(void) {
     settings_load();
     for (int t = 0; t < NTABS; t++) reset_tab(t);
     art_init();
+    lib_set_root(S.folder);
     bool cached = lib_load_cache();
     if (cached) lib_sort(S.sort);
     else { lib_sort(S.sort); lib_scan_start(); }
@@ -1448,7 +1587,11 @@ void app_debug_scene(int tab_i, int track, bool sheet, double pos) {
 }
 
 void app_debug_push(int type, int arg);
-void app_debug_push(int type, int arg) { push_page(type == 0 ? PG_ALBUM : PG_ARTIST, arg); push_anim = 1; }
+void app_debug_push(int type, int arg) {
+    if (type == 2) { fb_load("sdmc:/"); push_page(PG_FOLDERS, 0); push_anim = 1; return; }
+    push_page(type == 0 ? PG_ALBUM : PG_ARTIST, arg);
+    push_anim = 1;
+}
 
 void app_debug_cursor(int sel);
 void app_debug_cursor(int sel) { cursor_mode = true; page()->sel = sel; sel_y = hero_h(page()) + sel * row_h(page()); }

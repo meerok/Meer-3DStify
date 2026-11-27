@@ -54,6 +54,8 @@ bool lib_scan_poll(void);            /* true once when a finished scan was swapp
 int  lib_scan_count(void);
 void lib_scan_folder(char *out, int n);
 void lib_sort(int mode);
+void lib_set_root(const char *folder);   /* "" or "sdmc:/" = the whole SD card */
+const char *lib_root(void);
 int  lib_find_path(const char *path);
 void lib_set_liked(int t, bool on);
 void lib_save_liked(void);

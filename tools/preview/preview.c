@@ -86,5 +86,14 @@ int main(int argc, char **argv) {
     app_debug_scene(3, -1, false, 0);
     settle(1.0f);
     shot(out, "liked");
+
+    app_debug_scene(4, -1, false, 0);
+    app_debug_cursor(9);
+    settle(1.0f);
+    shot(out, "settings2");
+
+    app_debug_push(2, 0);
+    settle(1.0f);
+    shot(out, "folders");
     return 0;
 }

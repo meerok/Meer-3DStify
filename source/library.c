@@ -43,6 +43,7 @@ int     lib_nliked;
 
 static Lib cur;
 static int g_sort = SORT_TITLE;
+static char scan_root[512] = "sdmc:/";   /* folder to look for music in */
 
 /* scan thread state */
 static Lib scan_lib;
@@ -537,6 +538,7 @@ static void save_cache(Lib *L) {
     FILE *f = fopen(CACHE_FILE ".tmp", "w");
     if (!f) return;
     fprintf(f, "%s\n", CACHE_MAGIC);
+    fprintf(f, "#root\t%s\n", scan_root);
     for (int i = 0; i < L->nt; i++) {
         Track *t = &L->t[i];
         fprintf(f, "%s\t%s\t%s\t%s\t%u\t%lu\t%lu\n", t->path, t->title, t->artist, t->album,
@@ -560,6 +562,7 @@ bool lib_load_cache(void) {
     memset(&L, 0, sizeof L);
     char **cov_name = NULL, **cov_file = NULL;
     int ncov = 0, capcov = 0;
+    bool root_ok = false;
     while (fgets(line, 2048, f)) {
         line[strcspn(line, "\r\n")] = 0;
         char *fld[7] = { 0 };
@@ -571,6 +574,16 @@ bool lib_load_cache(void) {
             if (!tab) break;
             *tab = 0;
             p = tab + 1;
+        }
+        if (!strcmp(fld[0], "#root") && nf >= 2) {
+            if (strcmp(fld[1], scan_root)) {        /* scanned with another music folder: scan again */
+                free(line); fclose(f); lib_free_one(&L);
+                for (int c = 0; c < ncov; c++) { free(cov_name[c]); free(cov_file[c]); }
+                free(cov_name); free(cov_file);
+                return false;
+            }
+            root_ok = true;
+            continue;
         }
         if (!strcmp(fld[0], "#cover") && nf >= 3) {
             if (ncov == capcov) {
@@ -589,7 +602,12 @@ bool lib_load_cache(void) {
     }
     free(line);
     fclose(f);
-    if (L.nt == 0) { lib_free_one(&L); return false; }
+    if ((!root_ok && strcmp(scan_root, "sdmc:/")) || L.nt == 0) {
+        lib_free_one(&L);
+        for (int c = 0; c < ncov; c++) { free(cov_name[c]); free(cov_file[c]); }
+        free(cov_name); free(cov_file);
+        return false;
+    }
     finalize(&L, false);
     for (int c = 0; c < ncov; c++) {
         for (int a = 0; a < L.nal; a++)
@@ -672,7 +690,7 @@ static void scan_main(void *arg) {
     (void)arg;
     Lib L;
     memset(&L, 0, sizeof L);
-    walk(&L, "sdmc:/", 0);
+    walk(&L, scan_root, strcmp(scan_root, "sdmc:/") ? 1 : 0);   /* the system-folder skip list only applies at the card root */
     if (scan_abort) { lib_free_one(&L); scan_running = false; return; }
     finalize(&L, true);
     if (L.nt) save_cache(&L);
@@ -714,6 +732,13 @@ bool lib_scan_poll(void) {
     memset(&scan_lib, 0, sizeof scan_lib);
     return true;
 }
+
+void lib_set_root(const char *folder) {
+    if (!folder || !*folder) folder = "sdmc:/";
+    snprintf(scan_root, sizeof scan_root, "%s", folder);
+}
+
+const char *lib_root(void) { return scan_root; }
 
 void lib_sort(int mode) {
     g_sort = mode;
